@@ -1,244 +1,19 @@
 #define WIN32_LEAN_AND_MEAN
 #include <iostream>
 #include <fstream>
-#include <string>
-#include <iomanip>
 #include <sstream>
-#include <vector>
+#include <string>
 #include <cstdarg>
+#include <vector>
 #include <cstdint>
-#include <cwchar>
+#include <iomanip>
+#include "default_values.h"
+#include "basic_fat_structs.h"
 #include <Windows.h>
 #undef max
 #undef min
 
 using namespace std;
-
-#define BLACK           30
-#define RED             31
-#define GREEN           32
-#define YELLOW          33
-#define BLUE            34
-#define MAGENTA         35
-#define CYAN            36
-#define WHITE           37
-#define RESET           0
-#define BRIGHT          1
-#define UNDERLINE       4
-#define INVERSE         7
-#define BRIGHTOFF       21
-#define UNDERLINEOFF    24
-#define INVERSEOFF      27
-#define BG(color) (color+10)
-
-
-enum class operation {
-	WRITE = 0,
-	BOOT = 1,
-	ALIGN = 2,
-	LIST = 3,
-	REMOVE = 4,
-	EXTRACT = 5
-};
-
-#define ACTIVE_PARTITION	0x80
-#define INACTIVE_PARTITION	0x00
-
-#define PTYPE_UNKNOWN		0x00
-#define PTYPE_12FAT			0x01
-#define PTYPE_16FAT_SMALL	0x04
-#define PTYPE_EXTENDED		0x05
-#define PTYPE_16FAT_LARGE	0x06
-#define PTYPE_32FAT			0x0B
-#define PTYPE_32FAT_LBA		0x0C
-#define PTYPE_16FAT_LBA		0x0E
-#define PTYPE_EXTENDED_LBA	0x0F
-
-#define MEDIA_HARD_DISK		0xF8
-#define MEDIA_FLOPPY_1_4MB	0xF0
-#define MEDIA_RAM_DISK		0xFA
-
-#define ATTRIB_READ_ONLY	0x01
-#define ATTRIB_HIDDEN		0x02
-#define ATTRIB_SYSTEM		0x04
-#define ATTIRB_VOLUME_LABEL	0x08
-#define ATTRIB_SUBDIR		0x10
-#define ATTRIB_ARCHIVE		0x20
-#define ATTRIB_LONG_ENTRY	0x0F
-
-#define TIME_HOUR(value)	((value & 0xF800) >> 11)
-#define TIME_MINUTE(value)	((value & 0x07E0) >> 5)
-#define TIME_SECOND(value)	(value & 0x001F)
-
-#define DATE_YEAR(value)	(1980 + ((value & 0xFE00) >> 9))
-#define DATE_MONTH(value)	((value & 0x01E0) >> 5)
-#define DATE_DAY(value)		(value & 0x001F)
-
-#define LONG_SEQUENCE_LAST	0x40
-#define LONG_SEQUENCE		0x0F
-
-#define DELETED_ROOT_ENTRY	0xE5
-
-#define VFAT_LFN 0x0
-
-#define FAT12_CLUSTER_FREE	0x000
-#define FAT12_CLUSTER_BAD	0xFF7
-#define FAT12_CLUSTER_LAST	0xFF8
-
-#define FAT16_CLUSTER_FREE	0x0000
-#define FAT16_CLUSTER_BAD	0xFFF7
-#define FAT16_CLUSTER_LAST	0xFFF8
-
-#define FAT32_CLUSTER_FREE	0x00000000
-#define FAT32_CLUSTER_BAD	0xFFFFFFF7
-#define FAT32_CLUSTER_LAST	0xFFFFFFF
-
-
-struct CHSC
-{
-	int cylinder;
-	int sector;
-};
-
-#pragma pack(push,1)
-struct fat32
-{
-	uint8_t		jumpcode[3];
-	uint8_t		OEM[8];
-	uint16_t	BytesPerSector;
-	uint8_t		SectorPerCluster;
-	uint16_t	ReservedSectors;
-	uint8_t		NumberOfFat;
-	uint16_t	RootEntries;
-	uint16_t	NumberOfSectorInFS; //NA for fat32
-	uint8_t		MediaDesc;
-	uint16_t	SectorPerFatOld; //NA for fat32
-	uint16_t	SectorPerTrack;
-	uint16_t	NumberOfHeads;
-	uint32_t	HiddenSectors;
-	uint32_t	SectorInPartition;
-	uint32_t	SectorPerFat;
-	uint16_t	Flags;
-	uint16_t	FileSystemVersion;
-	uint32_t	FirstClusterOfRootDirectory;
-	uint16_t	FileSystemSector;
-	uint16_t	BackupBootSector;
-	uint8_t		Reserved[12];
-	uint8_t		LogicalDriveNumber;
-	uint8_t		Unused;
-	uint8_t		ExtendedSignature;
-	uint32_t	SerialNumber;
-	uint8_t		VolumeLabel[11];
-	uint8_t		FileSystem[8];
-};
-#pragma pack(pop)
-
-#pragma pack(push,1)
-struct fat16
-{
-	uint8_t		jumpcode[3];
-	uint8_t		OEM[8];
-	uint16_t	BytesPerSector;
-	uint8_t		SectorPerCluster;
-	uint16_t	ReservedSectors;
-	uint8_t		NumberOfFat;
-	uint16_t	RootEntries;
-	uint16_t	NumberOfSectorInFS;
-	uint8_t		MediaDesc;
-	uint16_t	SectorPerFat;
-	uint16_t	SectorPerTrack;
-	uint16_t	NumberOfHeads;
-	uint32_t	HiddenSectors;
-	uint32_t	NumberOfSectorInFSBackup;
-	uint8_t		LogicalDriveNumber;
-	uint8_t		Reserved;
-	uint8_t		ExtendedSignature;
-	uint32_t	SerialNumber;
-	uint8_t		VolumeLabel[11];
-	uint8_t		FileSystem[8];
-};
-#pragma pack(pop)
-
-#pragma pack(push,1)
-struct LongEntry
-{
-	uint8_t Sequence;
-	uint8_t Name1[10];
-	uint8_t Attribute;
-	uint8_t Type;
-	uint8_t Checksum;
-	uint8_t Name2[12];
-	uint16_t FirstCluster;
-	uint8_t Name3[4];
-};
-#pragma pack(pop)
-
-#pragma pack(push,1)
-struct RootEntry
-{
-	uint8_t Name[11];
-	uint8_t Attribute;
-	uint8_t Reserved[10];
-	uint16_t Time;
-	uint16_t Date;
-	uint16_t FirstCluster;
-	uint32_t Size;
-};
-#pragma pack(pop)
-
-#pragma pack(push,1)
-struct partition
-{
-	uint8_t		CurrentState;
-	uint8_t		BeginHead;
-	uint16_t	BeginCylinderSector;
-	uint8_t		Type;
-	uint8_t		EndHead;
-	uint16_t	EndCylinderSector;
-	uint32_t	SectorsBetween;
-	uint32_t	NumberOfSectors;
-};
-#pragma pack(pop)
-
-#pragma pack(push,1)
-struct mbr
-{
-	struct partition partition_entry[4];
-};
-#pragma pack(pop)
-
-#pragma pack(push, 1)
-struct FSInfo
-{
-	uint32_t	Sign1;
-	uint8_t		Reserved1[480];
-	uint32_t	Sing2;
-	uint32_t	FreeClusters;
-	uint32_t	NextFreeCluster;
-	uint8_t		Reserved2[12];
-	uint32_t	SectorSign;
-};
-#pragma pack(pop)
-
-#pragma pack(push,1)
-struct FAT12_CLUSTER
-{
-	bool bits[12];
-};
-#pragma pack(pop)
-
-#pragma pack(push,1)
-
-#pragma pack(pop)
-
-string bytes[6] = {
-	" Bytes",
-	" KB",
-	" MB",
-	" GB",
-	" TB",
-	" PB"
-};
 
 vector<struct fat32> fat32_part;
 vector<struct fat16> fat16_part;
@@ -312,6 +87,7 @@ string get_date(uint16_t value)
 	ss << setfill('0') << setw(4) << yer;
 	return ss.str();
 }
+
 string get_time(uint16_t value)
 {
 	int hour = TIME_HOUR(value);
@@ -324,6 +100,7 @@ string get_time(uint16_t value)
 	ss << setfill('0') << setw(2) << sec;
 	return ss.str();
 }
+
 string get_size(uint32_t value)
 {
 	short j = 0;
@@ -337,6 +114,7 @@ string get_size(uint32_t value)
 	s.append(bytes[j]);
 	return s;
 }
+
 string get_attrib_type(uint8_t attrib)
 {
 	string s;
