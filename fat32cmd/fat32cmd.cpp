@@ -1073,7 +1073,7 @@ int main(unsigned int argc, char** args)
 				if (task.size() != 0)
 				{
 					cout << c(BRIGHT) << c(RED);
-					cout << "No Image file provided!";
+					cout << "No Image file provided! Use option "<< c(YELLOW) <<"--image";
 					cout << c(RESET) << endl;
 				}
 			}
