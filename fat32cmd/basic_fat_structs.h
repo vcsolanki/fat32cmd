@@ -8,6 +8,21 @@ struct CHSC
 	int sector;
 };
 
+enum class PType
+{
+	FAT12 = 0,
+	FAT16 = 1,
+	FAT32 = 2
+};
+
+enum class PN
+{
+	PN1 = 0,
+	PN2 = 1,
+	PN3 = 2,
+	PN4 = 3
+};
+
 #pragma pack(push,1)
 struct fat32
 {
@@ -66,6 +81,17 @@ struct fat16
 	uint8_t		FileSystem[8];
 };
 #pragma pack(pop)
+
+struct PartitionInfo
+{
+	uint32_t ClusterSize;
+	uint32_t BytesPerSector;
+	uint32_t FatTableSector;
+	uint32_t RootEntries;
+	uint32_t RootTableSector;
+	uint32_t RootTableCluster;
+	PType Type;
+};
 
 #pragma pack(push,1)
 struct LongEntry

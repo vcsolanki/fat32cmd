@@ -66,6 +66,7 @@ enum class operation {
 #define LONG_SEQUENCE		0x0F
 
 #define DELETED_ROOT_ENTRY	0xE5
+#define LAST_ROOT_ENTRY		0x1E0
 
 #define VFAT_LFN 0x0
 

@@ -15,9 +15,11 @@
 
 using namespace std;
 
-vector<struct fat32> fat32_part;
-vector<struct fat16> fat16_part;
 struct mbr mbr_info;
+struct fat32 fat32_part[4];
+struct fat16 fat16_part[4];
+struct PartitionInfo part[4];
+uint8_t p = 0;
 
 string write_type;
 string write_file;
@@ -126,14 +128,23 @@ string get_attrib_type(uint8_t attrib)
 	return s;
 }
 
-int read_root_entry(long int current_root, long int org_root, int level, int entries, int sector_size, int cluster_size, FILE* img)
+int read_root_entry(long int current_root, long int org_root, int level, FILE* img)
 {
 	static int n;
+	uint32_t root_cluster = part[p].RootTableCluster;
 	for (int i = 0;; i++)
 	{
 		struct RootEntry rootentry;
-		fseek(img, current_root + (32 * i), 0);
+		uint32_t file_index = current_root + (((root_cluster - 2) * (part[p].ClusterSize) * part[p].BytesPerSector)) + (32 * i);
+		fseek(img, file_index, 0);
 		fread(&rootentry, 1, sizeof(rootentry), img);
+		if ((i * 32) == LAST_ROOT_ENTRY && (rootentry.FileName[0] & LONG_SEQUENCE_LAST) && part[p].Type == PType::FAT32)
+		{
+			fseek(img, (part[p].FatTableSector * part[p].BytesPerSector) + (root_cluster * 4), 0);
+			fread(&root_cluster, 1, 4, img);
+			i = -1;
+			continue;
+		}
 		if (rootentry.FileName[0] != 0x00)
 		{
 			if (rootentry.FileName[0] == DELETED_ROOT_ENTRY) continue;
@@ -145,7 +156,7 @@ int read_root_entry(long int current_root, long int org_root, int level, int ent
 			string name;
 			for (int j = 1;; j++)
 			{
-				fseek(img, current_root + (32 * i) - (32 * j), 0);
+				fseek(img, file_index - (32 * j), 0);
 				fread(&longentry, 1, sizeof(longentry), img);
 				for (int k = 0; k < 10; k = k + 2) name += longentry.Name1[k];
 				for (int k = 0; k < 12; k = k + 2) name += longentry.Name2[k];
@@ -154,33 +165,43 @@ int read_root_entry(long int current_root, long int org_root, int level, int ent
 					break;
 			}
 			cout << f("26", name.c_str()) << f("11", get_size(rootentry.FileSize).c_str()) << f("25", get_date(rootentry.LastWriteDate).append(" " + get_time(rootentry.LastWriteTime)).c_str()) << get_attrib_type(rootentry.Attribute) << endl;
-			
+
 			uint32_t cluster = rootentry.LowFirstCluster;
-			if (fat32_part.size() > 0)
+			if (part[p].Type == PType::FAT32)
 				cluster = (rootentry.HighFirstCluster << 16) | rootentry.LowFirstCluster;
 
 			if (rootentry.Attribute & ATTRIB_SUBDIR)
 			{
 				long int old_root = current_root;
-				current_root = org_root + (sector_size * (cluster_size * (cluster - 2)) + (entries * 32));
+				current_root = org_root + (part[p].BytesPerSector * (part[p].ClusterSize * (cluster - 2)) + (part[p].RootEntries * 32));
 				level++;
-				read_root_entry(current_root, org_root, level, entries, sector_size, cluster_size, img);
+				read_root_entry(current_root, org_root, level, img);
 				current_root = old_root;
 				level--;
 			}
 		}
 		else break;
+		
 	}
 	return n;
 }
 
-void get_root_entry(string file, RootEntry* entry, long int current_root, long int org_root, int level, int entries, int sector_size, int cluster_size, FILE* img)
+void get_root_entry(string file, RootEntry* entry, long int current_root, long int org_root, int level, FILE* img)
 {
+	uint32_t root_cluster = part[p].RootTableCluster;
 	for (int i = 0;; i++)
 	{
 		struct RootEntry rootentry;
-		fseek(img, current_root + (32 * i), 0);
+		uint32_t file_index = current_root + (((root_cluster - 2) * part[p].ClusterSize) * part[p].BytesPerSector) + (32 * i);
+		fseek(img, file_index, 0);
 		fread(&rootentry, 1, sizeof(rootentry), img);
+		if ((i * 32) == LAST_ROOT_ENTRY && (rootentry.FileName[0] & LONG_SEQUENCE_LAST) && part[p].Type == PType::FAT32)
+		{
+			fseek(img, (part[p].FatTableSector * part[p].BytesPerSector) + (root_cluster * 4), 0);
+			fread(&root_cluster, 1, 4, img);
+			i = -1;
+			continue;
+		}
 		if (rootentry.FileName[0] != 0x00)
 		{
 			if (rootentry.FileName[0] == DELETED_ROOT_ENTRY) continue;
@@ -191,7 +212,7 @@ void get_root_entry(string file, RootEntry* entry, long int current_root, long i
 			string name;
 			for (int j = 1;; j++)
 			{
-				fseek(img, current_root + (32 * i) - (32 * j), 0);
+				fseek(img, file_index - (32 * j), 0);
 				fread(&longentry, 1, sizeof(longentry), img);
 				for (int k = 0; k < 10; k = k + 2) name += longentry.Name1[k];
 				for (int k = 0; k < 12; k = k + 2) name += longentry.Name2[k];
@@ -208,20 +229,21 @@ void get_root_entry(string file, RootEntry* entry, long int current_root, long i
 			}
 
 			uint32_t cluster = rootentry.LowFirstCluster;
-			if (fat32_part.size() > 0)
+			if (part[p].Type == PType::FAT32)
 				cluster = (rootentry.HighFirstCluster << 16) | rootentry.LowFirstCluster;
 
 			if (rootentry.Attribute & ATTRIB_SUBDIR)
 			{
 				long int old_root = current_root;
-				current_root = org_root + (sector_size * (cluster_size * (cluster - 2)) + (entries * 32));
+				current_root = org_root + (part[p].BytesPerSector * (part[p].ClusterSize * (cluster - 2)) + (part[p].RootEntries * 32));
 				level++;
-				get_root_entry(file, entry, current_root, org_root, level, entries, sector_size, cluster_size, img);
+				get_root_entry(file, entry, current_root, org_root, level, img);
 				current_root = old_root;
 				level--;
 			}
 		}
 		else break;
+		
 	}
 }
 
@@ -233,6 +255,7 @@ bool file_exist(string name)
 
 bool check_image(string image)
 {
+	memset(&part, 0, sizeof(PartitionInfo) * 4);
 	FILE* img = fopen(image.c_str(), "rb");
 	fseek(img, 0x1be, 0);
 	fread(&mbr_info, 1, sizeof(mbr_info), img);
@@ -246,7 +269,14 @@ bool check_image(string image)
 			{
 				struct fat32 info;
 				fread(&info, 1, sizeof(info), img);
-				fat32_part.push_back(info);
+				fat32_part[i] = info;
+				part[i].BytesPerSector = info.BytesPerSector;
+				part[i].ClusterSize = info.SectorPerCluster;
+				part[i].FatTableSector = mbr_info.partition_entry[i].SectorsBetween + info.ReservedSectors;
+				part[i].RootEntries = info.RootEntries;
+				part[i].RootTableCluster = info.FirstClusterOfRootDirectory;
+				part[i].RootTableSector = mbr_info.partition_entry[i].SectorsBetween + info.ReservedSectors + (info.NumberOfFat * info.SectorPerFat);
+				part[i].Type = PType::FAT32;
 			}
 			else if (mbr_info.partition_entry[i].Type == PTYPE_16FAT_LARGE ||
 				mbr_info.partition_entry[i].Type == PTYPE_16FAT_SMALL ||
@@ -254,28 +284,41 @@ bool check_image(string image)
 			{
 				struct fat16 info;
 				fread(&info, 1, sizeof(info), img);
-				fat16_part.push_back(info);
+				fat16_part[i] = info;
+				part[i].BytesPerSector = info.BytesPerSector;
+				part[i].ClusterSize = info.SectorPerCluster;
+				part[i].FatTableSector = mbr_info.partition_entry[i].SectorsBetween + info.ReservedSectors;
+				part[i].RootEntries = info.RootEntries;
+				part[i].RootTableCluster = mbr_info.partition_entry[i].SectorsBetween + info.ReservedSectors + (info.NumberOfFat * info.SectorPerFat);
+				part[i].RootTableSector = mbr_info.partition_entry[i].SectorsBetween + info.ReservedSectors + (info.NumberOfFat * info.SectorPerFat);
+				part[i].Type = PType::FAT16;
 			}
 			else if (mbr_info.partition_entry[i].Type == PTYPE_12FAT)
 			{
 				struct fat16 info;
 				fread(&info, 1, sizeof(info), img);
-				fat16_part.push_back(info);
+				fat16_part[i] = info;
+				part[i].BytesPerSector = info.BytesPerSector;
+				part[i].ClusterSize = info.SectorPerCluster;
+				part[i].FatTableSector = mbr_info.partition_entry[i].SectorsBetween + info.ReservedSectors;
+				part[i].RootEntries = info.RootEntries;
+				part[i].RootTableCluster = mbr_info.partition_entry[i].SectorsBetween + info.ReservedSectors + (info.NumberOfFat * info.SectorPerFat);
+				part[i].RootTableSector = mbr_info.partition_entry[i].SectorsBetween + info.ReservedSectors + (info.NumberOfFat * info.SectorPerFat);
+				part[i].Type = PType::FAT12;
 			}
 		}
 	}
 	fclose(img);
-	if (fat32_part.empty() &&
-		fat16_part.empty())
-	{
+	if (part[0].BytesPerSector == 0 &&
+		part[1].BytesPerSector == 0 &&
+		part[2].BytesPerSector == 0 &&
+		part[3].BytesPerSector == 0)
 		return false;
-	}
 	return true;
 }
 
 void writetoimage(string src, string dest, string type)
 {
-
 	if (!file_exist(dest))
 	{
 		cout << c(BRIGHT) << c(RED);
@@ -322,41 +365,40 @@ void bootimage(string image)
 	}
 	if (check_image(image))
 	{
-
-		for (unsigned int i = 0; i < fat32_part.size(); i++)
+		if (part[p].Type == PType::FAT32)
 		{
 			cout << c(BRIGHT);
-			cout << c(WHITE) << f("20", "OEM Name") << ": " << c(YELLOW) << ls((char*)fat32_part[i].OEM, 8) << endl;
-			cout << c(WHITE) << f("20", "Volume Name") << ": " << c(YELLOW) << ls((char*)fat32_part[i].VolumeLabel, 8) << endl;
-			cout << c(WHITE) << f("20", "Type") << ": " << c(YELLOW) << ls((char*)fat32_part[i].FileSystem, 8) << endl;
-			cout << c(WHITE) << f("20", "Sectors") << ": " << c(YELLOW) << fat32_part[i].SectorInPartition << endl;
-			cout << c(WHITE) << f("20", "Bytes Per Sector") << ": " << c(YELLOW) << fat32_part[i].BytesPerSector << endl;
-			cout << c(WHITE) << f("20", "Sectors Per Track") << ": " << c(YELLOW) << fat32_part[i].SectorPerTrack << endl;
-			cout << c(WHITE) << f("20", "Heads") << ": " << c(YELLOW) << fat32_part[i].NumberOfHeads << endl;
-			cout << c(WHITE) << f("20", "Hidden Sectors") << ": " << c(YELLOW) << fat32_part[i].HiddenSectors << endl;
-			cout << c(WHITE) << f("20", "FAT Sectors") << ": " << c(YELLOW) << fat32_part[i].SectorPerFat << endl;
-			cout << c(WHITE) << f("20", "FAT Count") << ": " << c(YELLOW) << +fat32_part[i].NumberOfFat << endl;
-			cout << c(WHITE) << f("20", "Reserved Sectors") << ": " << c(YELLOW) << +fat32_part[i].ReservedSectors << endl;
-			cout << c(WHITE) << f("20", "Sectors Per Cluster") << ": " << c(YELLOW) << +fat32_part[i].SectorPerCluster << endl;
-			cout << c(WHITE) << f("20", "Root Entries") << ": " << c(YELLOW) << +fat32_part[i].RootEntries << endl;
+			cout << c(WHITE) << f("20", "OEM Name") << ": " << c(YELLOW) << ls((char*)fat32_part[p].OEM, 8) << endl;
+			cout << c(WHITE) << f("20", "Volume Name") << ": " << c(YELLOW) << ls((char*)fat32_part[p].VolumeLabel, 8) << endl;
+			cout << c(WHITE) << f("20", "Type") << ": " << c(YELLOW) << ls((char*)fat32_part[p].FileSystem, 8) << endl;
+			cout << c(WHITE) << f("20", "Sectors") << ": " << c(YELLOW) << fat32_part[p].SectorInPartition << endl;
+			cout << c(WHITE) << f("20", "Bytes Per Sector") << ": " << c(YELLOW) << fat32_part[p].BytesPerSector << endl;
+			cout << c(WHITE) << f("20", "Sectors Per Track") << ": " << c(YELLOW) << fat32_part[p].SectorPerTrack << endl;
+			cout << c(WHITE) << f("20", "Heads") << ": " << c(YELLOW) << fat32_part[p].NumberOfHeads << endl;
+			cout << c(WHITE) << f("20", "Hidden Sectors") << ": " << c(YELLOW) << fat32_part[p].HiddenSectors << endl;
+			cout << c(WHITE) << f("20", "FAT Sectors") << ": " << c(YELLOW) << fat32_part[p].SectorPerFat << endl;
+			cout << c(WHITE) << f("20", "FAT Count") << ": " << c(YELLOW) << +fat32_part[p].NumberOfFat << endl;
+			cout << c(WHITE) << f("20", "Reserved Sectors") << ": " << c(YELLOW) << +fat32_part[p].ReservedSectors << endl;
+			cout << c(WHITE) << f("20", "Sectors Per Cluster") << ": " << c(YELLOW) << +fat32_part[p].SectorPerCluster << endl;
+			cout << c(WHITE) << f("20", "Root Entries") << ": " << c(YELLOW) << +fat32_part[p].RootEntries << endl;
 			cout << c(RESET);
 		}
-		for (unsigned int i = 0; i < fat16_part.size(); i++)
+		else if (part[p].Type == PType::FAT12 || part[p].Type == PType::FAT16)
 		{
 			cout << c(BRIGHT);
-			cout << c(WHITE) << f("20", "OEM Name") << ": " << c(YELLOW) << ls((char*)fat16_part[i].OEM, 8) << endl;
-			cout << c(WHITE) << f("20", "Volume Name") << ": " << c(YELLOW) << ls((char*)fat16_part[i].VolumeLabel, 8) << endl;
-			cout << c(WHITE) << f("20", "Type") << ": " << c(YELLOW) << ls((char*)fat16_part[i].FileSystem, 8) << endl;
-			cout << c(WHITE) << f("20", "Sectors") << ": " << c(YELLOW) << fat16_part[i].NumberOfSectorInFS << endl;
-			cout << c(WHITE) << f("20", "Bytes Per Sector") << ": " << c(YELLOW) << fat16_part[i].BytesPerSector << endl;
-			cout << c(WHITE) << f("20", "Sectors Per Track") << ": " << c(YELLOW) << fat16_part[i].SectorPerTrack << endl;
-			cout << c(WHITE) << f("20", "Heads") << ": " << c(YELLOW) << fat16_part[i].NumberOfHeads << endl;
-			cout << c(WHITE) << f("20", "Hidden Sectors") << ": " << c(YELLOW) << fat16_part[i].HiddenSectors << endl;
-			cout << c(WHITE) << f("20", "FAT Sectors") << ": " << c(YELLOW) << fat16_part[i].SectorPerFat << endl;
-			cout << c(WHITE) << f("20", "FAT Count") << ": " << c(YELLOW) << +fat16_part[i].NumberOfFat << endl;
-			cout << c(WHITE) << f("20", "Reserved Sectors") << ": " << c(YELLOW) << +fat16_part[i].ReservedSectors << endl;
-			cout << c(WHITE) << f("20", "Sectors Per Cluster") << ": " << c(YELLOW) << +fat16_part[i].SectorPerCluster << endl;
-			cout << c(WHITE) << f("20", "Root Entries") << ": " << c(YELLOW) << +fat16_part[i].RootEntries << endl;
+			cout << c(WHITE) << f("20", "OEM Name") << ": " << c(YELLOW) << ls((char*)fat16_part[p].OEM, 8) << endl;
+			cout << c(WHITE) << f("20", "Volume Name") << ": " << c(YELLOW) << ls((char*)fat16_part[p].VolumeLabel, 8) << endl;
+			cout << c(WHITE) << f("20", "Type") << ": " << c(YELLOW) << ls((char*)fat16_part[p].FileSystem, 8) << endl;
+			cout << c(WHITE) << f("20", "Sectors") << ": " << c(YELLOW) << fat16_part[p].NumberOfSectorInFS << endl;
+			cout << c(WHITE) << f("20", "Bytes Per Sector") << ": " << c(YELLOW) << fat16_part[p].BytesPerSector << endl;
+			cout << c(WHITE) << f("20", "Sectors Per Track") << ": " << c(YELLOW) << fat16_part[p].SectorPerTrack << endl;
+			cout << c(WHITE) << f("20", "Heads") << ": " << c(YELLOW) << fat16_part[p].NumberOfHeads << endl;
+			cout << c(WHITE) << f("20", "Hidden Sectors") << ": " << c(YELLOW) << fat16_part[p].HiddenSectors << endl;
+			cout << c(WHITE) << f("20", "FAT Sectors") << ": " << c(YELLOW) << fat16_part[p].SectorPerFat << endl;
+			cout << c(WHITE) << f("20", "FAT Count") << ": " << c(YELLOW) << +fat16_part[p].NumberOfFat << endl;
+			cout << c(WHITE) << f("20", "Reserved Sectors") << ": " << c(YELLOW) << +fat16_part[p].ReservedSectors << endl;
+			cout << c(WHITE) << f("20", "Sectors Per Cluster") << ": " << c(YELLOW) << +fat16_part[p].SectorPerCluster << endl;
+			cout << c(WHITE) << f("20", "Root Entries") << ": " << c(YELLOW) << +fat16_part[p].RootEntries << endl;
 			cout << c(RESET);
 		}
 	}
@@ -411,40 +453,13 @@ void listimage(string image)
 	}
 	if (check_image(image))
 	{
-		int hidden_sector = 0;
-		int reserved_sector = 0;
-		int fat_count = 0;
-		int fat_sector = 0;
-		int entries = 0;
-		int sector_size = 0;
-		int cluster_size = 0;
-		if (fat32_part.size() != 0)
-		{
-			hidden_sector = fat32_part[0].HiddenSectors;
-			reserved_sector = fat32_part[0].ReservedSectors;
-			fat_count = fat32_part[0].NumberOfFat;
-			fat_sector = fat32_part[0].SectorPerFat;
-			sector_size = fat32_part[0].BytesPerSector;
-			entries = fat32_part[0].RootEntries;
-			cluster_size = fat32_part[0].SectorPerCluster;
-		}
-		else if (fat16_part.size() != 0)
-		{
-			hidden_sector = fat16_part[0].HiddenSectors;
-			reserved_sector = fat16_part[0].ReservedSectors;
-			fat_count = fat16_part[0].NumberOfFat;
-			fat_sector = fat16_part[0].SectorPerFat;
-			sector_size = fat16_part[0].BytesPerSector;
-			entries = fat16_part[0].RootEntries;
-			cluster_size = fat16_part[0].SectorPerCluster;
-		}
-		long int root_directory = (hidden_sector + (fat_sector * fat_count) + reserved_sector) * sector_size;
+		long int root_directory = part[p].RootTableSector * part[p].BytesPerSector;
 		FILE* img = fopen(image.c_str(), "r");
 		fseek(img, root_directory, 0);
 		cout << c(BRIGHT) << c(YELLOW);
 		cout << f("26", "Name") << f("11", "Size") << f("25", "Creation Date") << "Type" << endl << endl;
 		cout << c(WHITE);
-		int n = read_root_entry(root_directory, root_directory, 0, entries, sector_size, cluster_size, img);
+		int n = read_root_entry(root_directory, root_directory, 0, img);
 		fclose(img);
 		if (n == 0)
 		{
@@ -468,7 +483,6 @@ void removefromimage(string remove_file, string image)
 	}
 	if (check_image(image))
 	{
-
 	}
 }
 
@@ -485,39 +499,12 @@ void extractfromimageg(string image)
 	{
 		if (extract_type._Equal("file"))
 		{
-			int hidden_sector = 0;
-			int reserved_sector = 0;
-			int fat_count = 0;
-			int fat_sector = 0;
-			int entries = 0;
-			int sector_size = 0;
-			int cluster_size = 0;
-			if (fat32_part.size() != 0)
-			{
-				hidden_sector = fat32_part[0].HiddenSectors;
-				reserved_sector = fat32_part[0].ReservedSectors;
-				fat_count = fat32_part[0].NumberOfFat;
-				fat_sector = fat32_part[0].SectorPerFat;
-				sector_size = fat32_part[0].BytesPerSector;
-				entries = fat32_part[0].RootEntries;
-				cluster_size = fat32_part[0].SectorPerCluster;
-			}
-			else if (fat16_part.size() != 0)
-			{
-				hidden_sector = fat16_part[0].HiddenSectors;
-				reserved_sector = fat16_part[0].ReservedSectors;
-				fat_count = fat16_part[0].NumberOfFat;
-				fat_sector = fat16_part[0].SectorPerFat;
-				sector_size = fat16_part[0].BytesPerSector;
-				entries = fat16_part[0].RootEntries;
-				cluster_size = fat16_part[0].SectorPerCluster;
-			}
-			long root_directory = (hidden_sector + (fat_sector * fat_count) + reserved_sector) * sector_size;
+			long root_directory = part[p].RootTableSector * part[p].BytesPerSector;
 			FILE* img = fopen(image.c_str(), "rb");
 			fseek(img, root_directory, 0);
 			struct RootEntry rootentry;
 			rootentry.FileSize = -1;
-			get_root_entry(extract_file, &rootentry, root_directory, root_directory, 0, entries, sector_size, cluster_size, img);
+			get_root_entry(extract_file, &rootentry, root_directory, root_directory, 0, img);
 			if (rootentry.FileSize == -1)
 			{
 				cout << c(BRIGHT) << c(YELLOW);
@@ -527,21 +514,32 @@ void extractfromimageg(string image)
 			else
 			{
 				uint32_t cluster_last, cluster_entry;
-				if (fat32_part.size() > 0) { cluster_last = FAT32_CLUSTER_LAST; cluster_entry = 4; }
-				else if (fat16_part.size() > 0)
-					if (strncmp((char*)fat16_part[0].FileSystem, "FAT12   ", 8) == 0) { cluster_last = 0xFF; cluster_entry = 1; }
-					else if (strncmp((char*)fat16_part[0].FileSystem, "FAT16   ", 8) == 0) { cluster_last = FAT16_CLUSTER_LAST; cluster_entry = 2; }
+				if (part[p].Type == PType::FAT32)
+				{	
+					cluster_last = FAT32_CLUSTER_LAST;
+					cluster_entry = 4; 
+				}
+				else if (part[p].Type == PType::FAT32)
+				{
+					cluster_last = 0xFF;
+					cluster_entry = 1;
+				}
+				else if (part[p].Type == PType::FAT12)
+				{
+					cluster_last = FAT16_CLUSTER_LAST;
+					cluster_entry = 2;
+				}
 				FILE* extr = fopen(extract_file.c_str(), "wb");
-				long fat_table = (hidden_sector + reserved_sector) * sector_size;
+				long fat_table = part[p].FatTableSector * part[p].BytesPerSector;
 				uint32_t cluster = rootentry.LowFirstCluster;
-				if(fat32_part.size()>0)
+				if (part[p].Type == PType::FAT32)
 					cluster = (rootentry.HighFirstCluster << 16) | rootentry.LowFirstCluster;
 				uint32_t size = 0;
 				uint32_t read_size = 0;
-				uint8_t* buf = (uint8_t*)malloc(cluster_size * sector_size);
+				uint8_t* buf = (uint8_t*)malloc(part[p].ClusterSize * part[p].BytesPerSector);
 				do
 				{
-					read_size = cluster_size * sector_size;
+					read_size = part[p].ClusterSize * part[p].BytesPerSector;
 					size += read_size;
 					if (read_size > rootentry.FileSize)
 						read_size = rootentry.FileSize;
@@ -550,7 +548,7 @@ void extractfromimageg(string image)
 						size = size - read_size;
 						read_size = rootentry.FileSize - size;
 					}
-					fseek(img, root_directory + (sector_size * (cluster_size * (cluster - 2)) + (entries * 32)), SEEK_SET);
+					fseek(img, root_directory + (part[p].BytesPerSector * (part[p].ClusterSize * (cluster - 2)) + (part[p].RootEntries * 32)), SEEK_SET);
 					fread(buf, 1, read_size, img);
 					fwrite(buf, 1, read_size, extr);
 					if (cluster_entry != 1)
@@ -603,7 +601,6 @@ void extractfromimageg(string image)
 
 int main(unsigned int argc, char** args)
 {
-
 	DWORD mode;
 	GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode);
 	if (!(mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING))
@@ -626,7 +623,7 @@ int main(unsigned int argc, char** args)
 	{
 #endif // DEBUG
 #ifdef _DEBUG
-		string s = "-e file image.jpg -i 16hdd.img";
+		string s = "-l -i 256hdd.img";
 		stringstream ss(s);
 		string temp = "";
 		while (!ss.eof())
@@ -660,7 +657,6 @@ int main(unsigned int argc, char** args)
 			cout << c(WHITE) << f("10", "Example:") << c(YELLOW) << "fat32cmd -w boot boot.bin -i hdd.img" << endl;
 			cout << f("10", "") << c(YELLOW) << "fat32cmd --align --image hdd.img" << endl;
 			cout << f("10", "") << c(YELLOW) << "fat32cmd -b -i hdd.img" << endl;
-
 
 			cout << c(RESET);
 		}
@@ -863,7 +859,7 @@ int main(unsigned int argc, char** args)
 				if (task.size() != 0)
 				{
 					cout << c(BRIGHT) << c(RED);
-					cout << "No Image file provided! Use option "<< c(YELLOW) <<"--image";
+					cout << "No Image file provided! Use option " << c(YELLOW) << "--image";
 					cout << c(RESET) << endl;
 				}
 			}
