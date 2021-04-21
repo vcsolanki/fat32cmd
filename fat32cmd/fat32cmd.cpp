@@ -131,7 +131,7 @@ string get_attrib_type(uint8_t attrib)
 int read_root_entry(long int current_root, long int org_root, int level, FILE* img)
 {
 	static int n;
-	uint32_t root_cluster = part[p].RootTableCluster;
+	uint32_t root_cluster = (part[p].Type == PType::FAT32) ? part[p].RootTableCluster : 2;
 	for (int i = 0;; i++)
 	{
 		struct RootEntry rootentry;
@@ -188,7 +188,7 @@ int read_root_entry(long int current_root, long int org_root, int level, FILE* i
 
 void get_root_entry(string file, RootEntry* entry, long int current_root, long int org_root, int level, FILE* img)
 {
-	uint32_t root_cluster = part[p].RootTableCluster;
+	uint32_t root_cluster = (part[p].Type == PType::FAT32) ? part[p].RootTableCluster : 2;
 	for (int i = 0;; i++)
 	{
 		struct RootEntry rootentry;
@@ -519,12 +519,12 @@ void extractfromimageg(string image)
 					cluster_last = FAT32_CLUSTER_LAST;
 					cluster_entry = 4; 
 				}
-				else if (part[p].Type == PType::FAT32)
+				else if (part[p].Type == PType::FAT12)
 				{
 					cluster_last = 0xFF;
 					cluster_entry = 1;
 				}
-				else if (part[p].Type == PType::FAT12)
+				else if (part[p].Type == PType::FAT16)
 				{
 					cluster_last = FAT16_CLUSTER_LAST;
 					cluster_entry = 2;
@@ -623,7 +623,7 @@ int main(unsigned int argc, char** args)
 	{
 #endif // DEBUG
 #ifdef _DEBUG
-		string s = "-l -i 256hdd.img";
+		string s = "-l -i ../Release/16hdd.img";
 		stringstream ss(s);
 		string temp = "";
 		while (!ss.eof())
