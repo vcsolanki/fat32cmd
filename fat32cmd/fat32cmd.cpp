@@ -134,12 +134,12 @@ int read_root_entry(long int current_root, long int org_root, int level, int ent
 		struct RootEntry rootentry;
 		fseek(img, current_root + (32 * i), 0);
 		fread(&rootentry, 1, sizeof(rootentry), img);
-		if (rootentry.Name[0] != 0x00)
+		if (rootentry.FileName[0] != 0x00)
 		{
-			if (rootentry.Name[0] == DELETED_ROOT_ENTRY) continue;
+			if (rootentry.FileName[0] == DELETED_ROOT_ENTRY) continue;
 			if (rootentry.Attribute & ATTRIB_LONG_ENTRY) continue;
-			if (rootentry.Name[0] == '.' && level != 0) continue;
-			if (rootentry.Name[0] == 0x05) rootentry.Name[0] &= 0xE0;
+			if (rootentry.FileName[0] == '.' && level != 0) continue;
+			if (rootentry.FileName[0] == 0x05) rootentry.FileName[0] &= 0xE0;
 			n++;
 			struct LongEntry longentry;
 			string name;
@@ -153,11 +153,11 @@ int read_root_entry(long int current_root, long int org_root, int level, int ent
 				if (longentry.Sequence & LONG_SEQUENCE_LAST)
 					break;
 			}
-			cout << f("26", name.c_str()) << f("11", get_size(rootentry.Size).c_str()) << f("25", get_date(rootentry.Date).append(" " + get_time(rootentry.Time)).c_str()) << get_attrib_type(rootentry.Attribute) << endl;
+			cout << f("26", name.c_str()) << f("11", get_size(rootentry.FileSize).c_str()) << f("25", get_date(rootentry.LastWriteDate).append(" " + get_time(rootentry.LastWriteTime)).c_str()) << get_attrib_type(rootentry.Attribute) << endl;
 			if (rootentry.Attribute & ATTRIB_SUBDIR)
 			{
 				long int old_root = current_root;
-				current_root = org_root + (sector_size * (cluster_size * (rootentry.FirstCluster - 2)) + (entries * 32));
+				current_root = org_root + (sector_size * (cluster_size * (rootentry.LowFirstCluster - 2)) + (entries * 32));
 				level++;
 				read_root_entry(current_root, org_root, level, entries, sector_size, cluster_size, img);
 				current_root = old_root;
@@ -176,12 +176,12 @@ void get_root_entry(string file, RootEntry* entry, long int current_root, long i
 		struct RootEntry rootentry;
 		fseek(img, current_root + (32 * i), 0);
 		fread(&rootentry, 1, sizeof(rootentry), img);
-		if (rootentry.Name[0] != 0x00)
+		if (rootentry.FileName[0] != 0x00)
 		{
-			if (rootentry.Name[0] == DELETED_ROOT_ENTRY) continue;
+			if (rootentry.FileName[0] == DELETED_ROOT_ENTRY) continue;
 			if (rootentry.Attribute & ATTRIB_LONG_ENTRY) continue;
-			if (rootentry.Name[0] == '.' && level != 0) continue;
-			if (rootentry.Name[0] == 0x05) rootentry.Name[0] &= 0xE0;
+			if (rootentry.FileName[0] == '.' && level != 0) continue;
+			if (rootentry.FileName[0] == 0x05) rootentry.FileName[0] &= 0xE0;
 			struct LongEntry longentry;
 			string name;
 			for (int j = 1;; j++)
@@ -204,7 +204,7 @@ void get_root_entry(string file, RootEntry* entry, long int current_root, long i
 			if (rootentry.Attribute & ATTRIB_SUBDIR)
 			{
 				long int old_root = current_root;
-				current_root = org_root + (sector_size * (cluster_size * (rootentry.FirstCluster - 2)) + (entries * 32));
+				current_root = org_root + (sector_size * (cluster_size * (rootentry.LowFirstCluster - 2)) + (entries * 32));
 				level++;
 				get_root_entry(file, entry, current_root, org_root, level, entries, sector_size, cluster_size, img);
 				current_root = old_root;
@@ -456,10 +456,10 @@ void removefromimage(string remove_file, string image)
 		cout << c(RESET) << endl;
 		return;
 	}
+	if (check_image(image))
+	{
 
-	cout << c(BRIGHT);
-	cout << "REMOVE: " << c(YELLOW) << remove_file << ", " << image << endl;
-	cout << c(RESET);
+	}
 }
 
 void extractfromimageg(string image)
@@ -506,9 +506,9 @@ void extractfromimageg(string image)
 			FILE* img = fopen(image.c_str(), "rb");
 			fseek(img, root_directory, 0);
 			struct RootEntry rootentry;
-			rootentry.Size = -1;
+			rootentry.FileSize = -1;
 			get_root_entry(extract_file, &rootentry, root_directory, root_directory, 0, entries, sector_size, cluster_size, img);
-			if (rootentry.Size == -1)
+			if (rootentry.FileSize == -1)
 			{
 				cout << c(BRIGHT) << c(YELLOW);
 				cout << "There is no file named " << extract_file << " in this FAT Image.";
@@ -523,7 +523,9 @@ void extractfromimageg(string image)
 					else if (strncmp((char*)fat16_part[0].FileSystem, "FAT16   ", 8) == 0) { cluster_last = FAT16_CLUSTER_LAST; cluster_entry = 2; }
 				FILE* extr = fopen(extract_file.c_str(), "wb");
 				long fat_table = (hidden_sector + reserved_sector) * sector_size;
-				uint32_t cluster = rootentry.FirstCluster;
+				uint32_t cluster = rootentry.LowFirstCluster;
+				if(fat32_part.size()>0)
+					cluster = (rootentry.HighFirstCluster << 16) | rootentry.LowFirstCluster;
 				uint32_t size = 0;
 				uint32_t read_size = 0;
 				uint8_t* buf = (uint8_t*)malloc(cluster_size * sector_size);
@@ -531,12 +533,12 @@ void extractfromimageg(string image)
 				{
 					read_size = cluster_size * sector_size;
 					size += read_size;
-					if (read_size > rootentry.Size)
-						read_size = rootentry.Size;
-					else if (size > rootentry.Size)
+					if (read_size > rootentry.FileSize)
+						read_size = rootentry.FileSize;
+					else if (size > rootentry.FileSize)
 					{
 						size = size - read_size;
-						read_size = rootentry.Size - size;
+						read_size = rootentry.FileSize - size;
 					}
 					fseek(img, root_directory + (sector_size * (cluster_size * (cluster - 2)) + (entries * 32)), SEEK_SET);
 					fread(buf, 1, read_size, img);

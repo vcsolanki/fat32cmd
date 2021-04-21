@@ -84,13 +84,19 @@ struct LongEntry
 #pragma pack(push,1)
 struct RootEntry
 {
-	uint8_t Name[11];
+	uint8_t FileName[8];
+	uint8_t FileExtension[3];
 	uint8_t Attribute;
-	uint8_t Reserved[10];
-	uint16_t Time;
-	uint16_t Date;
-	uint16_t FirstCluster;
-	uint32_t Size;
+	uint8_t Reserved;
+	uint8_t CreationMillisecondStamp;
+	uint16_t CreationTime;
+	uint16_t CreationDate;
+	uint16_t LastAccessedDate;
+	uint16_t HighFirstCluster;
+	uint16_t LastWriteTime;
+	uint16_t LastWriteDate;
+	uint16_t LowFirstCluster;
+	uint32_t FileSize;
 };
 #pragma pack(pop)
 
