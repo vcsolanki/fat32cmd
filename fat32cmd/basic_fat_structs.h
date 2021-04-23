@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 struct CHSC
 {
@@ -13,14 +15,6 @@ enum class PType
 	FAT12 = 0,
 	FAT16 = 1,
 	FAT32 = 2
-};
-
-enum class PN
-{
-	PN1 = 0,
-	PN2 = 1,
-	PN3 = 2,
-	PN4 = 3
 };
 
 #pragma pack(push,1)
@@ -90,6 +84,7 @@ struct PartitionInfo
 	uint32_t RootEntries;
 	uint32_t RootTableSector;
 	uint32_t RootTableCluster;
+	uint32_t ClusterEntrySize;
 	PType Type;
 };
 
@@ -159,3 +154,10 @@ struct FSInfo
 	uint32_t	SectorSign;
 };
 #pragma pack(pop)
+
+struct FileList
+{
+	std::string name;
+	RootEntry entry;
+	std::vector<FileList> sublist;
+};
